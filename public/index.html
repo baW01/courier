@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kurier App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        form {
+            margin-bottom: 20px;
+        }
+
+        input, button {
+            padding: 10px;
+            margin-right: 10px;
+        }
+
+        li {
+            margin-bottom: 5px;
+        }
+
+        #map {
+            margin-top: 20px;
+            width: 100%;
+            height: 400px; /* Możesz dostosować wysokość */
+        }
+    </style>
+</head>
+<body>
+    <h1>Planowanie tras dostaw</h1>
+    <form id="deliveryForm">
+        <input type="text" id="addressInput" placeholder="Wprowadź adres dostawy" required>
+        <button type="submit">Dodaj dostawę</button>
+        <button type="button" id="wyznaczTrase">Wyznacz trasę</button>
+        <button type="button" id="rozpocznijTrase">Rozpocznij trasę</button>
+        <button type="button" id="kopiujTrase">Kopiuj trasę do Google Maps</button>
+    </form>
+
+    <ul id="deliveriesList"></ul>
+    <div id="map" style="height: 400px;"></div>
+
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATopaTCsisTvx-uPTyUFx0e95YwZb-XiY&callback=initMap&libraries=places"></script>
+    <script>
+let map;
+let autocomplete;
+let directionsService;
+let directionsRenderer;
+let marker;
+let deliveries = []; // Tablica na adresy dostaw
+let sortedDestinations = [];
+
+
+function initMap() {
+    directionsService = new google.maps.DirectionsService();
+    directionsRenderer = new google.maps.DirectionsRenderer();
+    map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: -34.397, lng: 150.644 },
+        zoom: 15,
+    });
+    directionsRenderer.setMap(map);
+
+    autocomplete = new google.maps.places.Autocomplete(
+        document.getElementById('addressInput'), {types: ['geocode']}
+    );
+    autocomplete.addListener('place_changed', onPlaceChanged);
+
+    function onPlaceChanged() {
+    const place = autocomplete.getPlace();
+    if (!place.geometry) {
+        window.alert("No details available for input: '" + place.name + "'");
+        return;
+    }
+    map.setCenter(place.geometry.location);
+}
+
+function addDelivery(event) {
+    event.preventDefault();
+    const addressInput = document.getElementById('addressInput');
+    const address = addressInput.value;
+    if (address) {
+        deliveries.push(address);
+        addressInput.value = ''; // Wyczyść pole wprowadzania
+        updateDeliveriesList();
+    }
+}
+
+function displaySortedRoute() {
+    if (deliveries.length === 0) {
+        alert("Proszę dodać co najmniej jeden adres dostawy.");
+        return;
+    }
+
+    if (!navigator.geolocation) {
+        alert("Geolocation is not supported by this browser.");
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(position => {
+        const currentLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+        };
+
+        // Dodajemy bieżącą lokalizację jako punkt początkowy
+        const allDestinations = [`${currentLocation.lat},${currentLocation.lng}`, ...deliveries];
+
+        calculateDistancesAndSort(currentLocation, allDestinations, function(updatedSortedDestinations) {
+            sortedDestinations = updatedSortedDestinations; // Aktualizacja globalnej zmiennej
+            calculateAndDisplayRoute(sortedDestinations); // Wywołanie funkcji z nową posortowaną listą
+        });
+    }, () => {
+        alert("Failed to get your location.");
+    });
+}
+
+    // Inicjalizacja obsługi formularza i przycisków
+    document.getElementById('deliveryForm').addEventListener('submit', addDelivery);
+    document.getElementById('wyznaczTrase').addEventListener('click', displaySortedRoute);
+    document.getElementById('kopiujTrase').addEventListener('click', copyRouteToGoogleMaps);
+}
+
+    document.getElementById('deliveryForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+        const addressInput = document.getElementById('addressInput');
+        const address = addressInput.value;
+        if (address) {
+            deliveries.push(address); // Dodaj adres do tablicy dostaw
+            addressInput.value = ''; // Wyczyść pole input
+            updateDeliveriesList(); // Aktualizuj listę wyświetlaną na stronie
+        } else {
+            console.error('Adres jest pusty.');
+        }
+    });
+
+    document.getElementById('wyznaczTrase').addEventListener('click', function() {
+    if (!navigator.geolocation) {
+        alert("Geolocation is not supported by this browser.");
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(position => {
+        const currentLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+        };
+        // Zakładając, że currentLocation jest pierwszym punktem trasy
+        deliveries.unshift(`${currentLocation.lat},${currentLocation.lng}`);
+        calculateDistancesAndSort(currentLocation, deliveries, function(sortedDestinations) {
+            calculateAndDisplayRoute(sortedDestinations);
+        });
+    }, function() {
+        alert("Failed to get your location.");
+    });
+});
+
+
+function updateDeliveriesList() {
+    const deliveriesList = document.getElementById('deliveriesList');
+    deliveriesList.innerHTML = ''; // Wyczyść listę
+    deliveries.forEach((delivery, index) => {
+        let listItem = document.createElement('li');
+        listItem.textContent = `${index + 1}: ${delivery}`;
+        deliveriesList.appendChild(listItem);
+    });
+}
+
+document.getElementById('kopiujTrase').addEventListener('click', copyRouteToGoogleMaps);
+
+function copyRouteToGoogleMaps() {
+    if (googleOptimizedDestinations.length === 0) {
+        alert("Brak zdefiniowanej trasy.");
+        return;
+    }
+
+    // Przygotowanie URL dla Google Maps z wykorzystaniem zoptymalizowanej listy destynacji
+    const origin = googleOptimizedDestinations[0];
+    const destination = googleOptimizedDestinations[googleOptimizedDestinations.length - 1];
+    const waypoints = googleOptimizedDestinations.slice(1, -1); // Pomiń pierwszy i ostatni punkt
+
+    const googleMapsURL = buildGoogleMapsURL(origin, waypoints, destination);
+
+    window.open(googleMapsURL, '_blank');
+}
+
+function buildGoogleMapsURL(origin, waypoints, destination) {
+    let googleMapsURL = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+
+    if (waypoints.length > 0) {
+        const waypointsParam = waypoints.map(dest => encodeURIComponent(dest)).join('|');
+        googleMapsURL += `&waypoints=${waypointsParam}`;
+    }
+
+    return googleMapsURL;
+}
+
+
+
+
+function calculateAndDisplayRoute() {
+    const waypoints = sortedDestinations.slice(1, -1).map(location => ({
+        location: location,
+        stopover: true
+    }));
+
+    directionsService.route({
+        origin: sortedDestinations[0],
+        destination: sortedDestinations[sortedDestinations.length - 1],
+        waypoints: waypoints,
+        optimizeWaypoints: true,
+        travelMode: google.maps.TravelMode.DRIVING,
+    }, function(response, status) {
+        if (status === 'OK') {
+            directionsRenderer.setDirections(response);
+            
+            // Odczytanie zoptymalizowanej kolejności i zapisanie jej
+            const optimizedOrder = [sortedDestinations[0]]; // Zawsze zaczynamy od punktu początkowego
+            const route = response.routes[0];
+
+            route.waypoint_order.forEach(function(waypointIndex) {
+                optimizedOrder.push(sortedDestinations[waypointIndex + 1]); // +1, ponieważ pomijamy punkt początkowy
+            });
+
+            optimizedOrder.push(sortedDestinations[sortedDestinations.length - 1]); // Dodajemy punkt końcowy
+
+            // Tutaj masz zoptymalizowaną kolejność, którą możesz wykorzystać np. do stworzenia linku do Google Maps
+            console.log("Zoptymalizowana kolejność:", optimizedOrder);
+
+            // Możesz teraz zapisać tę kolejność do zmiennej, którą będziesz używał później
+            googleOptimizedDestinations = optimizedOrder;
+
+        } else {
+            window.alert('Nie można wyznaczyć trasy: ' + status);
+        }
+    });
+}
+
+let googleOptimizedDestinations = []; // Tutaj będziemy przechowywać zoptymalizowane przez Google destynacje
+
+
+
+
+function calculateDistancesAndSort(origin, destinations, callback) {
+    console.log("Original destinations:", destinations);
+    let service = new google.maps.DistanceMatrixService();
+    service.getDistanceMatrix({
+        origins: [origin],
+        destinations: destinations.slice(1), // Pomijamy pierwszy element, ponieważ jest to nasza lokalizacja
+        travelMode: google.maps.TravelMode.DRIVING,
+    }, function(response, status) {
+        if (status === 'OK') {
+            let distances = response.rows[0].elements;
+            let sorted = destinations.slice(1).map((dest, index) => ({
+                destination: dest,
+                distance: distances[index].distance.value
+            }))
+            .sort((a, b) => a.distance - b.distance)
+            .map(item => item.destination);
+
+            // Zwracamy posortowane adresy z lokalizacją startową na początku listy
+            callback([origin, ...sorted]);
+        } else {
+            console.error('Problem with the Distance Matrix response:', status);
+        }
+    });
+}
+
+
+
+
+        </script>        
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kurier App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        form {
+            margin-bottom: 20px;
+        }
+
+        input, button {
+            padding: 10px;
+            margin-right: 10px;
+        }
+
+        li {
+            margin-bottom: 5px;
+        }
+
+        #map {
+            margin-top: 20px;
+            width: 100%;
+            height: 400px; /* Możesz dostosować wysokość */
+        }
+    </style>
+</head>
+<body>
+    <h1>Planowanie tras dostaw</h1>
+    <form id="deliveryForm">
+        <input type="text" id="addressInput" placeholder="Wprowadź adres dostawy" required>
+        <button type="submit">Dodaj dostawę</button>
+        <button type="button" id="wyznaczTrase">Wyznacz trasę</button>
+        <button type="button" id="rozpocznijTrase">Rozpocznij trasę</button>
+    </form>
+
+    <ul id="deliveriesList"></ul>
+    <div id="map" style="height: 400px;"></div>
+
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATopaTCsisTvx-uPTyUFx0e95YwZb-XiY&callback=initMap&libraries=places"></script>
+    <script>
+        let map;
+let autocomplete;
+// Przenieśmy deklaracje tych zmiennych na samą górę, aby były globalne.
+let directionsService;
+let directionsRenderer;
+
+function initMap() {
+    map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: -34.397, lng: 150.644 },
+        zoom: 8,
+    });
+
+    // Teraz inicjalizujemy directionsService i directionsRenderer tutaj, w funkcji initMap.
+    directionsService = new google.maps.DirectionsService();
+    directionsRenderer = new google.maps.DirectionsRenderer();
+    directionsRenderer.setMap(map);
+
+    autocomplete = new google.maps.places.Autocomplete(
+        document.getElementById('addressInput'),
+        { types: ['geocode'] }
+    );
+
+    autocomplete.addListener('place_changed', function() {
+        const place = autocomplete.getPlace();
+        if (!place.geometry) {
+            window.alert("No details available for input: '" + place.name + "'");
+            return;
+        }
+        map.setCenter(place.geometry.location);
+        map.setZoom(15);
+    });
+}
+
+       
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('deliveryForm').addEventListener('submit', function(event) {
+                event.preventDefault();
+
+                const addressInput = document.getElementById('addressInput');
+                const address = addressInput.value;
+                addressInput.value = ''; // Clear input after submit
+
+                // Send the address to the backend
+                fetch('/deliveries', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ address })
+                }).then(() => {
+                    fetchDeliveries(); // Refresh the list of deliveries
+                }).catch(error => {
+                    console.error('Error:', error);
+                });
+            });
+
+            document.getElementById('wyznaczTrase').addEventListener('click', async function() {
+                const response = await fetch('/calculate-route', { method: 'POST' });
+                const sortedDeliveries = await response.json();
+
+                let waypoints = sortedDeliveries.map(delivery => ({ location: delivery.address, stopover: true }));
+
+                if (waypoints.length > 0) {
+                    const start = waypoints.shift().location;
+                    const end = waypoints.pop().location;
+
+                    directionsService.route({
+                        origin: start,
+                        destination: end,
+                        waypoints: waypoints,
+                        optimizeWaypoints: true,
+                        travelMode: google.maps.TravelMode.DRIVING,
+                    }, (result, status) => {
+                        if (status === google.maps.DirectionsStatus.OK) {
+                            directionsRenderer.setDirections(result);
+                        } else {
+                            window.alert('Nie udało się wyznaczyć trasy: ' + status);
+                        }
+                    });
+                }
+            });
+        });
+
+        fetchDeliveries(); // Initial fetch of deliveries
+    </script>
+</body>
+</html>
+async function fetchDeliveries() {
+    const response = await fetch('/deliveries');
+    const deliveries = await response.json();
+    const deliveriesList = document.getElementById('deliveriesList');
+    deliveriesList.innerHTML = ''; // Clear current list
+    deliveries.forEach((delivery, index) => {
+        const listItem = document.createElement('li');
+        listItem.textContent = delivery.address;
+        if (!delivery.delivered) {
+            const deliverButton = document.createElement('button');
+            deliverButton.textContent = 'Dostarczono';
+            deliverButton.onclick = async () => {
+                await fetch(`/deliveries/${index}`, {
+                    method: 'PATCH'
+                });
+                fetchDeliveries(); // Refresh the list of deliveries
+            };
+            listItem.appendChild(deliverButton);
+        }
+        deliveriesList.appendChild(listItem);
+    });
+}
